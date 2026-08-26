@@ -65,7 +65,7 @@ async def ai_text(prompt: str, session: str):
     if not key or not LlmChat: return None
     chat = LlmChat(api_key=key, session_id=session, system_message="You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked.").with_model("openai", "gpt-5.4-mini")
     out = ""
-    async for event in chat.stream_message(UserMessage(text=prompt)):ce
+    async for event in chat.stream_message(UserMessage(text=prompt)):
         if isinstance(event, TextDelta): out += event.content
     return out
 
