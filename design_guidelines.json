@@ -1,0 +1,44 @@
+{
+  "app_name": "AI Project Idea Generator for College Students",
+  "archetype": "Swiss & High-Contrast with Editorial Future Touch",
+  "theme": "dark/light responsive with deep indigo and electric cyan accents (FORBIDDEN: #7351B7 and #1B93A4)",
+  "typography": {
+    "heading_font": "Cabinet Grotesk / Outfit, sans-serif",
+    "body_font": "Satoshi / Inter, sans-serif",
+    "mono_font": "JetBrains Mono, monospace"
+  },
+  "colors": {
+    "primary": "#0F172A",
+    "accent": "#06B6D4",
+    "secondary": "#3B82F6",
+    "background": "#0B0F19",
+    "surface": "#1E293B",
+    "border": "#334155",
+    "text_primary": "#F8FAFC",
+    "text_muted": "#94A3B8"
+  },
+  "image_urls": {
+    "hero_background": "https://images.pexels.com/photos/17485706/pexels-photo-17485706.png?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "student_lab": "https://images.pexels.com/photos/5530437/pexels-photo-5530437.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "abstract_tech": "https://images.unsplash.com/photo-1689443111130-6e9c7dfd8f9e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzV8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBmdXR1cmlzdGljJTIwYWJzdHJhY3QlMjB0ZWNoJTIwYWklMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4NzcyNzQ4NXww&ixlib=rb-4.1.0&q=85"
+  },
+  "components": [
+    "Navbar",
+    "LandingHero",
+    "FeatureBentoGrid",
+    "AuthModal",
+    "StudentDashboard",
+    "ProjectGeneratorForm",
+    "ProjectResultCard",
+    "ProjectDetailsModal",
+    "ProjectHistoryList",
+    "AIChatAssistant",
+    "AdminDashboard",
+    "PDFExport"
+  ],
+  "accessibility": {
+    "contrast_ratio": "minimum 4.5:1 for normal text, 3:1 for large text",
+    "aria_labels": "mandatory on all interactive buttons and modals",
+    "data_testids": "mandatory on all buttons, links, inputs, and form controls"
+  }
+}

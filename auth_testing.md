@@ -1,0 +1,2 @@
+# ProjectGen AI authentication testing
+Use the demo admin credentials from `/app/memory/test_credentials.md`. Verify register, login, cookie session, `/api/auth/me`, logout, protected project generation, and admin stats.
