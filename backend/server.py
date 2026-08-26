@@ -70,7 +70,23 @@ async def ai_text(prompt: str, session: str):
     return out
 
 def mock_projects(inp):
-    return [{"title": f"{inp.interests.title()} Insight Hub", "tagline": "A practical platform that turns student needs into measurable outcomes.", "problem_statement": f"Students need a focused {inp.project_type.lower()} solution for {inp.interests.lower()}.", "description": "A scoped academic project with a clear user journey, thoughtful data model, and room to demonstrate AI.", "suitable": f"Fits {inp.branch} students with {inp.difficulty.lower()} experience and a {inp.team_size}-member team.", "target_users": "Students, faculty mentors, and domain users", "key_features": ["Personalized dashboard", "Search and analytics", "AI-powered recommendations"], "ai_features": ["Smart classification", "Natural-language assistant"], "tech_stack": [x.strip() for x in (inp.technologies or "React, FastAPI, MongoDB").split(",")], "frontend": "React.js", "backend": "FastAPI", "database": "MongoDB", "apis": ["REST API", "AI service"], "architecture": "Responsive React client connected to FastAPI REST services and MongoDB.", "collections": ["users", "projects", "conversations"], "roadmap": ["Research and wireframes", "Build core workflow", "Add AI and testing", "Deploy and document"], "estimated_time": inp.duration, "difficulty": inp.difficulty, "responsibilities": ["Frontend and UX", "Backend and data", "AI and testing"], "future": ["Mobile companion", "Advanced analytics", "Faculty review mode"], "learning_outcomes": ["API design", "Database modeling", "Responsible AI"]}]
+    templates = [
+        {"focus": "Insight Hub", "angle": "a practical platform that turns student needs into measurable outcomes"},
+        {"focus": "Companion App", "angle": "a guided experience that simplifies a common student workflow"},
+        {"focus": "Analytics Dashboard", "angle": "a data-driven view that helps users make better decisions"},
+        {"focus": "Smart Assistant", "angle": "an AI-assisted tool that reduces manual effort"},
+        {"focus": "Community Platform", "angle": "a connected space that brings users and resources together"},
+        {"focus": "Tracker", "angle": "a focused tool for monitoring progress over time"},
+        {"focus": "Marketplace", "angle": "a two-sided platform connecting supply and demand"},
+        {"focus": "Recommendation Engine", "angle": "a personalized system that surfaces relevant options"},
+        {"focus": "Automation Tool", "angle": "a system that removes repetitive manual steps"},
+        {"focus": "Feedback Portal", "angle": "a structured way to collect and act on input"},
+    ]
+    results = []
+    for i in range(inp.count):
+        t = templates[i % len(templates)]
+        results.append({"title": f"{inp.interests.title()} {t['focus']}", "tagline": f"A {t['angle']}.", "problem_statement": f"Students need a focused {inp.project_type.lower()} solution for {inp.interests.lower()}.", "description": "A scoped academic project with a clear user journey, thoughtful data model, and room to demonstrate AI.", "suitable": f"Fits {inp.branch} students with {inp.difficulty.lower()} experience and a {inp.team_size}-member team.", "target_users": "Students, faculty mentors, and domain users", "key_features": ["Personalized dashboard", "Search and analytics", "AI-powered recommendations"], "ai_features": ["Smart classification", "Natural-language assistant"], "tech_stack": [x.strip() for x in (inp.technologies or "React, FastAPI, MongoDB").split(",")], "frontend": "React.js", "backend": "FastAPI", "database": "MongoDB", "apis": ["REST API", "AI service"], "architecture": "Responsive React client connected to FastAPI REST services and MongoDB.", "collections": ["users", "projects", "conversations"], "roadmap": ["Research and wireframes", "Build core workflow", "Add AI and testing", "Deploy and document"], "estimated_time": inp.duration, "difficulty": inp.difficulty, "responsibilities": ["Frontend and UX", "Backend and data", "AI and testing"], "future": ["Mobile companion", "Advanced analytics", "Faculty review mode"], "learning_outcomes": ["API design", "Database modeling", "Responsible AI"]})
+    return results
 
 @api.post("/auth/register")
 async def register(data: AuthInput, response: Response):
