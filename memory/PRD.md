@@ -22,3 +22,12 @@ Build a complete full-stack AI Project Idea Generator for B.Tech and college stu
 - P0: Add richer saved-project filtering and full admin moderation list.
 - P1: Persist chat messages and add downloadable generated PDF file.
 - P2: Add refresh tokens, email reset flow, and usage rate limiting.
+## Implemented (2026-06)
+- Fixed AI generation/refine/chat returning identical generic (mock) results: root cause was provider 429 concurrent_request_limit errors silently falling back to mock_projects template.
+- Fix in /app/backend/server.py: asyncio.Semaphore(1) serializes all LLM calls, 4 retries with backoff on 429/rate-limit, honest 503 "AI mentor is busy" error instead of silent mock (mock only used when EMERGENT_LLM_KEY is absent).
+- Verified via curl on external URL: two distinct generations for different inputs, refine returns modified project, chat returns contextual answer.
+
+## Backlog
+- P0: Verify Google OAuth end-to-end in a real browser (entry point + callback exist, provider completion untested).
+- P1: Full browser regression via testing agent (history filters, PDF, mobile nav, admin).
+- P2: Split compact App.js into page components before large future changes.

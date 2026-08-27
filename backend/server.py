@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env")
 
-import os, json, logging, secrets, requests
+import os, json, logging, secrets, requests, asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Any
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
@@ -60,14 +60,28 @@ async def current_user(request: Request):
     if not doc: raise HTTPException(401, "User not found")
     return doc
 
+AI_SEMAPHORE = asyncio.Semaphore(1)
+AI_ENABLED = bool(os.environ.get("EMERGENT_LLM_KEY")) and LlmChat is not None
+AI_BUSY_MESSAGE = "The AI mentor is busy with another request. Please wait a few seconds and try again."
+
 async def ai_text(prompt: str, session: str):
+    if not AI_ENABLED: return None
     key = os.environ.get("EMERGENT_LLM_KEY")
-    if not key or not LlmChat: return None
-    chat = LlmChat(api_key=key, session_id=session, system_message="You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked.").with_model("openai", "gpt-5.4-mini")
-    out = ""
-    async for event in chat.stream_message(UserMessage(text=prompt)):
-        if isinstance(event, TextDelta): out += event.content
-    return out
+    async with AI_SEMAPHORE:
+        for attempt in range(4):
+            try:
+                chat = LlmChat(api_key=key, session_id=session, system_message="You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked.").with_model("openai", "gpt-5.4-mini")
+                out = ""
+                async for event in chat.stream_message(UserMessage(text=prompt)):
+                    if isinstance(event, TextDelta): out += event.content
+                if out.strip(): return out
+            except Exception as e:
+                msg = str(e)
+                if "429" in msg or "concurrent" in msg.lower() or "ratelimit" in msg.lower():
+                    await asyncio.sleep(3 * (attempt + 1)); continue
+                logging.error(f"AI call failed: {msg}")
+                return None
+    return None
 
 def mock_projects(inp):
     return [{"title": f"{inp.interests.title()} Insight Hub", "tagline": "A practical platform that turns student needs into measurable outcomes.", "problem_statement": f"Students need a focused {inp.project_type.lower()} solution for {inp.interests.lower()}.", "description": "A scoped academic project with a clear user journey, thoughtful data model, and room to demonstrate AI.", "suitable": f"Fits {inp.branch} students with {inp.difficulty.lower()} experience and a {inp.team_size}-member team.", "target_users": "Students, faculty mentors, and domain users", "key_features": ["Personalized dashboard", "Search and analytics", "AI-powered recommendations"], "ai_features": ["Smart classification", "Natural-language assistant"], "tech_stack": [x.strip() for x in (inp.technologies or "React, FastAPI, MongoDB").split(",")], "frontend": "React.js", "backend": "FastAPI", "database": "MongoDB", "apis": ["REST API", "AI service"], "architecture": "Responsive React client connected to FastAPI REST services and MongoDB.", "collections": ["users", "projects", "conversations"], "roadmap": ["Research and wireframes", "Build core workflow", "Add AI and testing", "Deploy and document"], "estimated_time": inp.duration, "difficulty": inp.difficulty, "responsibilities": ["Frontend and UX", "Backend and data", "AI and testing"], "future": ["Mobile companion", "Advanced analytics", "Faculty review mode"], "learning_outcomes": ["API design", "Database modeling", "Responsible AI"]}]
@@ -116,7 +130,9 @@ async def generate(inp: GeneratorInput, user=Depends(current_user)):
     if raw:
         try: ideas = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
         except Exception: ideas = None
-    ideas = ideas or mock_projects(inp)
+    if not ideas:
+        if AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
+        ideas = mock_projects(inp)
     for idea in ideas:
         if isinstance(idea.get("tech_stack"), dict):
             idea["tech_stack"] = [str(value) for value in idea["tech_stack"].values()]
@@ -147,11 +163,13 @@ async def refine(inp: RefineInput, user=Depends(current_user)):
     if raw:
         try: return {"project": json.loads(raw[raw.find("{"):raw.rfind("}")+1])}
         except Exception: pass
+    if AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
     return {"project": {**inp.project, "tagline": f"Refined direction: {inp.instruction}", "future": inp.project.get("future", []) + ["Measure outcomes with student feedback"]}}
 
 @api.post("/ai/chat")
 async def chat(inp: ChatInput, user=Depends(current_user)):
     raw = await ai_text(f"Answer the student's question about this project in 2-4 useful paragraphs. Project: {json.dumps(inp.project)} Question: {inp.message}", f"chat-{user['_id']}")
+    if not raw and AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
     return {"answer": raw or "Start with the smallest working user flow, define your data model early, and validate each feature with a short demo script."}
 
 @api.get("/admin/stats")
