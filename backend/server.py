@@ -9,19 +9,17 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from motor.motor_asyncio import AsyncIOMotorClient
-import bcrypt, jwt
+import bcrypt, jwt, httpx
+from bson import ObjectId
 
-try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta
-except Exception:
-    LlmChat = None
+logging.basicConfig(level=logging.INFO)
 
 ROOT = Path(__file__).parent
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
 app = FastAPI(title="ProjectGen AI")
 api = APIRouter(prefix="/api")
-JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_hex(32))
+JWT_SECRET = os.environ["JWT_SECRET"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@projectgen.ai")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ProjectGenAdmin123!")
 
@@ -59,39 +57,51 @@ async def current_user(request: Request):
     if not raw: raise HTTPException(401, "Please log in to continue")
     try: payload = jwt.decode(raw, JWT_SECRET, algorithms=["HS256"])
     except jwt.PyJWTError: raise HTTPException(401, "Your session has expired")
-    doc = await db.users.find_one({"_id": __import__("bson").ObjectId(payload["sub"])})
+    try: doc = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+    except Exception: raise HTTPException(401, "Invalid token")
     if not doc: raise HTTPException(401, "User not found")
     return doc
 
 AI_SEMAPHORE = asyncio.Semaphore(1)
-AI_ENABLED = bool(os.environ.get("EMERGENT_LLM_KEY")) and LlmChat is not None
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+AI_ENABLED = bool(GROQ_API_KEY)
 AI_BUSY_MESSAGE = "The AI mentor is busy with another request. Please wait a few seconds and try again."
+AI_SYSTEM_MESSAGE = "You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked."
 
 async def ai_text(prompt: str, session: str):
     if not AI_ENABLED: return None
-    key = os.environ.get("EMERGENT_LLM_KEY")
     async with AI_SEMAPHORE:
-        for attempt in range(4):
-            try:
-                chat = LlmChat(api_key=key, session_id=session, system_message="You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked.").with_model("openai", "gpt-5.4-mini")
-                out = ""
-                async for event in chat.stream_message(UserMessage(text=prompt)):
-                    if isinstance(event, TextDelta): out += event.content
-                if out.strip(): return out
-            except Exception as e:
-                msg = str(e)
-                if "429" in msg or "concurrent" in msg.lower() or "ratelimit" in msg.lower():
-                    await asyncio.sleep(3 * (attempt + 1)); continue
-                logging.error(f"AI call failed: {msg}")
-                return None
+        async with httpx.AsyncClient(timeout=120) as http:
+            for attempt in range(3):
+                try:
+                    r = await http.post("https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                        json={"model": GROQ_MODEL, "messages": [{"role": "system", "content": AI_SYSTEM_MESSAGE}, {"role": "user", "content": prompt}], "temperature": 0.9, "max_completion_tokens": 7000, "reasoning_effort": "low"})
+                    if r.status_code in (413, 429):
+                        await asyncio.sleep(6 * (attempt + 1)); continue
+                    r.raise_for_status()
+                    out = r.json()["choices"][0]["message"]["content"]
+                    if out and out.strip(): return out
+                except Exception as e:
+                    logging.error(f"Groq AI call failed: {e}")
+                    await asyncio.sleep(2)
     return None
 
 def parse_ideas(raw):
     if not raw: return None
-    try:
-        ideas = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
-        return [x for x in ideas if isinstance(x, dict) and x.get("title")] or None
-    except Exception: return None
+    start = raw.find("[")
+    if start == -1: return None
+    candidates = []
+    if "]" in raw[start:]: candidates.append(raw[start:raw.rfind("]") + 1])
+    if "}" in raw[start:]: candidates.append(raw[start:raw.rfind("}") + 1] + "]")
+    for text in candidates:
+        try:
+            ideas = json.loads(text)
+            found = [x for x in ideas if isinstance(x, dict) and x.get("title")]
+            if found: return found
+        except Exception: continue
+    return None
 
 @api.post("/auth/register")
 async def register(data: AuthInput, response: Response):
@@ -131,18 +141,16 @@ async def me(user=Depends(current_user)): return public_user(user)
 
 @api.post("/projects/generate")
 async def generate(inp: GeneratorInput, user=Depends(current_user)):
-    if not AI_ENABLED: raise HTTPException(503, "The AI service is not configured on this server (missing EMERGENT_LLM_KEY). Ideas cannot be generated.")
+    if not AI_ENABLED: raise HTTPException(503, "The AI service is not configured on this server (missing GROQ_API_KEY). Ideas cannot be generated.")
     def build_prompt(count, exclude):
         avoid = f" Do NOT repeat these titles: {', '.join(exclude)}." if exclude else ""
-        return f"Generate exactly {count} distinct academic project ideas as a JSON array of {count} objects. Student profile: branch={inp.branch}, year={inp.year}, skills={inp.skills}, interests={inp.interests}, type={inp.project_type}, difficulty={inp.difficulty}, team={inp.team_size}, duration={inp.duration}, technologies={inp.technologies}. Every idea must be clearly specific to the stated interests and skills. Each object must include title, tagline, problem_statement, description, suitable, target_users, key_features, ai_features, tech_stack, frontend, backend, database, apis, architecture, collections, roadmap, estimated_time, difficulty, responsibilities, future, learning_outcomes.{avoid}"
+        return f"Generate exactly {count} distinct academic project ideas as a JSON array of {count} objects. Student profile: branch={inp.branch}, year={inp.year}, skills={inp.skills}, interests={inp.interests}, type={inp.project_type}, difficulty={inp.difficulty}, team={inp.team_size}, duration={inp.duration}, technologies={inp.technologies}. Every idea must be clearly specific to the stated interests and skills. Each object must include title, tagline, problem_statement, description, suitable, target_users, key_features, ai_features, tech_stack, frontend, backend, database, apis, architecture, collections, roadmap, estimated_time, difficulty, responsibilities, future, learning_outcomes. Keep every string concise (max 22 words) and every list at most 5 items so the full array fits in the response.{avoid}"
     ideas = parse_ideas(await ai_text(build_prompt(inp.count, []), f"generate-{user['_id']}-{datetime.now().timestamp()}")) or []
-    for _ in range(2):
-        if len(ideas) >= inp.count: break
-        missing = inp.count - len(ideas)
-        extra = parse_ideas(await ai_text(build_prompt(missing, [i["title"] for i in ideas]), f"generate-topup-{user['_id']}-{datetime.now().timestamp()}"))
-        if not extra: break
-        titles = {i["title"] for i in ideas}
-        ideas += [x for x in extra if x["title"] not in titles]
+    if ideas and len(ideas) < inp.count:
+        extra = parse_ideas(await ai_text(build_prompt(inp.count - len(ideas), [i["title"] for i in ideas]), f"generate-topup-{user['_id']}-{datetime.now().timestamp()}"))
+        if extra:
+            titles = {i["title"] for i in ideas}
+            ideas += [x for x in extra if x["title"] not in titles]
     if not ideas: raise HTTPException(503, AI_BUSY_MESSAGE)
     ideas = ideas[:inp.count]
     for idea in ideas:
@@ -150,7 +158,7 @@ async def generate(inp: GeneratorInput, user=Depends(current_user)):
             idea["tech_stack"] = [str(value) for value in idea["tech_stack"].values()]
     docs = [{**p, "id": secrets.token_hex(12), "user_id": str(user["_id"]), "branch": inp.branch, "project_type": inp.project_type, "created_at": datetime.now(timezone.utc).isoformat(), "saved": False} for p in ideas]
     if docs: await db.projects.insert_many(docs)
-    return {"projects": [{**p, "id": str(r.inserted_id)} for p, r in zip(docs, [])]} if False else {"projects": [{k:v for k,v in p.items() if k != "_id"} for p in docs]}
+    return {"projects": [{k: v for k, v in p.items() if k != "_id"} for p in docs]}
 
 @api.get("/projects")
 async def projects(search: str = "", difficulty: str = "", saved: bool = False, user=Depends(current_user)):

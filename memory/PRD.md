@@ -53,3 +53,10 @@ Build a complete full-stack AI Project Idea Generator for B.Tech and college stu
 - P2: raise 503 if final idea count < requested after top-up loop.
 - P2: remove dead ternary in generate response; require JWT_SECRET from env.
 - P2: add data-testid to interests input; explicit value prop on <option>.
+
+## Implemented (2026-06, iteration 5) - Groq migration
+- Replaced Emergent Universal Key with user's Groq API key (GROQ_API_KEY + GROQ_MODEL=openai/gpt-oss-120b in backend/.env); emergentintegrations removed from server.py; portable to external hosting.
+- Groq free tier = 8000 TPM: single lean AI call per generation (max_completion_tokens=7000, reasoning_effort=low, concise-output prompt), parse_ideas salvages truncated JSON, 413/429 backoff retries.
+- Verified by testing agent iteration_5 (100%): count 3/5/10 all exact + topic-specific (4-9s), refine, viva=8, frontend e2e count=5, no option hydration warnings.
+- Hardening: JWT_SECRET now required from env (no fallback); current_user raises 401 on malformed token sub; regression suite /app/backend/tests/test_retest_iter5.py (space generate calls 60s apart due to TPM).
+- Note: partial under-delivery returns actual ideas; frontend toast announces real count (not silent).
