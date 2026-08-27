@@ -60,3 +60,8 @@ Build a complete full-stack AI Project Idea Generator for B.Tech and college stu
 - Verified by testing agent iteration_5 (100%): count 3/5/10 all exact + topic-specific (4-9s), refine, viva=8, frontend e2e count=5, no option hydration warnings.
 - Hardening: JWT_SECRET now required from env (no fallback); current_user raises 401 on malformed token sub; regression suite /app/backend/tests/test_retest_iter5.py (space generate calls 60s apart due to TPM).
 - Note: partial under-delivery returns actual ideas; frontend toast announces real count (not silent).
+
+## Iteration 6 (2026-06) - "failed to fetch" login report
+- Not reproducible on current preview URL (project-spark-ai-1.preview.emergentagent.com). RCA: user was on stale URL (old preview idea-forge-267 / stale Vercel copy).
+- Verified 100% by testing agent: admin login, fresh register + relogin, session persistence via httpOnly cookie, generate smoke.
+- CORS: server.py now allow_origin_regex='.*' with credentials (correct), BUT preview ingress overrides ACAO to '*' — cross-origin credentialed clients (e.g. Vercel frontend -> this backend) still blocked at ingress level. Platform-level, revisit only if user deploys split frontend.

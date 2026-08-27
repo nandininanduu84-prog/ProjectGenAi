@@ -23,7 +23,7 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@projectgen.ai")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ProjectGenAdmin123!")
 
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[os.environ.get("FRONTEND_URL", "*")], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origin_regex=".*", allow_methods=["*"], allow_headers=["*"])
 
 class AuthInput(BaseModel):
     name: str = ""
