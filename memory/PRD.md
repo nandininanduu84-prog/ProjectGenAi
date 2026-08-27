@@ -31,3 +31,16 @@ Build a complete full-stack AI Project Idea Generator for B.Tech and college stu
 - P0: Verify Google OAuth end-to-end in a real browser (entry point + callback exist, provider completion untested).
 - P1: Full browser regression via testing agent (history filters, PDF, mobile nav, admin).
 - P2: Split compact App.js into page components before large future changes.
+
+## Implemented (2026-06, iteration 2)
+- Verified via testing agent (iteration_2.json, 13/13 backend, 100% frontend): AI bug fixed — distinct topic-specific generations, refine/chat working.
+- New: Idea Comparison (select 2 cards on dashboard/history -> /compare side-by-side view with Choose buttons).
+- New: Viva Prep Mode (POST /api/ai/viva, VivaBox on details page, ~8 expandable Q&A items).
+- History page fixed: cards now open details, delete button added, compare enabled.
+- Google sign-in: redirect to managed auth verified + invalid-session graceful fallback to /login (full provider completion not automatable).
+- Fixed legacy dict tech_stack (normalize on read in GET /api/projects + frontend Array.isArray guard by testing agent).
+- Dashboard stats now show real counts instead of hardcoded 12/4/08.
+
+## Backlog
+- P2: Real popular-branches data in /api/admin/stats (currently static 42/28/24 list).
+- P2: Split compact App.js into page components before large future changes.

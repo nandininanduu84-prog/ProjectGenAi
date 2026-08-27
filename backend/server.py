@@ -45,6 +45,9 @@ class RefineInput(BaseModel):
 class ChatInput(BaseModel):
     project: dict; message: str
 
+class VivaInput(BaseModel):
+    project: dict
+
 def public_user(doc):
     return {"id": str(doc.get("_id", doc.get("id"))), "name": doc["name"], "email": doc["email"], "branch": doc.get("branch", ""), "college": doc.get("college", ""), "year": doc.get("year", ""), "role": doc.get("role", "student")}
 
@@ -146,6 +149,8 @@ async def projects(search: str = "", difficulty: str = "", saved: bool = False, 
     if difficulty: q["difficulty"] = difficulty
     if saved: q["saved"] = True
     rows = await db.projects.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+    for row in rows:
+        if isinstance(row.get("tech_stack"), dict): row["tech_stack"] = [str(v) for v in row["tech_stack"].values()]
     if search: rows = [x for x in rows if search.lower() in x.get("title", "").lower()]
     return {"projects": rows}
 
@@ -171,6 +176,20 @@ async def chat(inp: ChatInput, user=Depends(current_user)):
     raw = await ai_text(f"Answer the student's question about this project in 2-4 useful paragraphs. Project: {json.dumps(inp.project)} Question: {inp.message}", f"chat-{user['_id']}")
     if not raw and AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
     return {"answer": raw or "Start with the smallest working user flow, define your data model early, and validate each feature with a short demo script."}
+
+@api.post("/ai/viva")
+async def viva(inp: VivaInput, user=Depends(current_user)):
+    raw = await ai_text(f"You are an examiner. Generate 8 likely viva/oral-examination questions with strong suggested answers (3-5 sentences each) for this student project. Return only a JSON array of objects with 'question' and 'answer' string fields. Project: {json.dumps(inp.project)}", f"viva-{user['_id']}")
+    items = None
+    if raw:
+        try:
+            items = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
+            items = [x for x in items if isinstance(x, dict) and x.get("question")]
+        except Exception: items = None
+    if not items:
+        if AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
+        items = [{"question": "What problem does your project solve?", "answer": inp.project.get("problem_statement", "Explain the core user problem and who faces it.")}]
+    return {"questions": items}
 
 @api.get("/admin/stats")
 async def admin_stats(user=Depends(current_user)):
