@@ -86,8 +86,12 @@ async def ai_text(prompt: str, session: str):
                 return None
     return None
 
-def mock_projects(inp):
-    return [{"title": f"{inp.interests.title()} Insight Hub", "tagline": "A practical platform that turns student needs into measurable outcomes.", "problem_statement": f"Students need a focused {inp.project_type.lower()} solution for {inp.interests.lower()}.", "description": "A scoped academic project with a clear user journey, thoughtful data model, and room to demonstrate AI.", "suitable": f"Fits {inp.branch} students with {inp.difficulty.lower()} experience and a {inp.team_size}-member team.", "target_users": "Students, faculty mentors, and domain users", "key_features": ["Personalized dashboard", "Search and analytics", "AI-powered recommendations"], "ai_features": ["Smart classification", "Natural-language assistant"], "tech_stack": [x.strip() for x in (inp.technologies or "React, FastAPI, MongoDB").split(",")], "frontend": "React.js", "backend": "FastAPI", "database": "MongoDB", "apis": ["REST API", "AI service"], "architecture": "Responsive React client connected to FastAPI REST services and MongoDB.", "collections": ["users", "projects", "conversations"], "roadmap": ["Research and wireframes", "Build core workflow", "Add AI and testing", "Deploy and document"], "estimated_time": inp.duration, "difficulty": inp.difficulty, "responsibilities": ["Frontend and UX", "Backend and data", "AI and testing"], "future": ["Mobile companion", "Advanced analytics", "Faculty review mode"], "learning_outcomes": ["API design", "Database modeling", "Responsible AI"]}]
+def parse_ideas(raw):
+    if not raw: return None
+    try:
+        ideas = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
+        return [x for x in ideas if isinstance(x, dict) and x.get("title")] or None
+    except Exception: return None
 
 @api.post("/auth/register")
 async def register(data: AuthInput, response: Response):
@@ -127,15 +131,20 @@ async def me(user=Depends(current_user)): return public_user(user)
 
 @api.post("/projects/generate")
 async def generate(inp: GeneratorInput, user=Depends(current_user)):
-    prompt = f"Generate {inp.count} distinct academic project ideas as a JSON array. Student: branch={inp.branch}, year={inp.year}, skills={inp.skills}, interests={inp.interests}, type={inp.project_type}, difficulty={inp.difficulty}, team={inp.team_size}, duration={inp.duration}, technologies={inp.technologies}. Each object must include title, tagline, problem_statement, description, suitable, target_users, key_features, ai_features, tech_stack, frontend, backend, database, apis, architecture, collections, roadmap, estimated_time, difficulty, responsibilities, future, learning_outcomes. Avoid generic duplicates."
-    raw = await ai_text(prompt, f"generate-{user['_id']}-{datetime.now().timestamp()}")
-    ideas = None
-    if raw:
-        try: ideas = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
-        except Exception: ideas = None
-    if not ideas:
-        if AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
-        ideas = mock_projects(inp)
+    if not AI_ENABLED: raise HTTPException(503, "The AI service is not configured on this server (missing EMERGENT_LLM_KEY). Ideas cannot be generated.")
+    def build_prompt(count, exclude):
+        avoid = f" Do NOT repeat these titles: {', '.join(exclude)}." if exclude else ""
+        return f"Generate exactly {count} distinct academic project ideas as a JSON array of {count} objects. Student profile: branch={inp.branch}, year={inp.year}, skills={inp.skills}, interests={inp.interests}, type={inp.project_type}, difficulty={inp.difficulty}, team={inp.team_size}, duration={inp.duration}, technologies={inp.technologies}. Every idea must be clearly specific to the stated interests and skills. Each object must include title, tagline, problem_statement, description, suitable, target_users, key_features, ai_features, tech_stack, frontend, backend, database, apis, architecture, collections, roadmap, estimated_time, difficulty, responsibilities, future, learning_outcomes.{avoid}"
+    ideas = parse_ideas(await ai_text(build_prompt(inp.count, []), f"generate-{user['_id']}-{datetime.now().timestamp()}")) or []
+    for _ in range(2):
+        if len(ideas) >= inp.count: break
+        missing = inp.count - len(ideas)
+        extra = parse_ideas(await ai_text(build_prompt(missing, [i["title"] for i in ideas]), f"generate-topup-{user['_id']}-{datetime.now().timestamp()}"))
+        if not extra: break
+        titles = {i["title"] for i in ideas}
+        ideas += [x for x in extra if x["title"] not in titles]
+    if not ideas: raise HTTPException(503, AI_BUSY_MESSAGE)
+    ideas = ideas[:inp.count]
     for idea in ideas:
         if isinstance(idea.get("tech_stack"), dict):
             idea["tech_stack"] = [str(value) for value in idea["tech_stack"].values()]
@@ -168,14 +177,13 @@ async def refine(inp: RefineInput, user=Depends(current_user)):
     if raw:
         try: return {"project": json.loads(raw[raw.find("{"):raw.rfind("}")+1])}
         except Exception: pass
-    if AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
-    return {"project": {**inp.project, "tagline": f"Refined direction: {inp.instruction}", "future": inp.project.get("future", []) + ["Measure outcomes with student feedback"]}}
+    raise HTTPException(503, AI_BUSY_MESSAGE if AI_ENABLED else "The AI service is not configured on this server.")
 
 @api.post("/ai/chat")
 async def chat(inp: ChatInput, user=Depends(current_user)):
     raw = await ai_text(f"Answer the student's question about this project in 2-4 useful paragraphs. Project: {json.dumps(inp.project)} Question: {inp.message}", f"chat-{user['_id']}")
-    if not raw and AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
-    return {"answer": raw or "Start with the smallest working user flow, define your data model early, and validate each feature with a short demo script."}
+    if not raw: raise HTTPException(503, AI_BUSY_MESSAGE if AI_ENABLED else "The AI service is not configured on this server.")
+    return {"answer": raw}
 
 @api.post("/ai/viva")
 async def viva(inp: VivaInput, user=Depends(current_user)):
@@ -187,8 +195,7 @@ async def viva(inp: VivaInput, user=Depends(current_user)):
             items = [x for x in items if isinstance(x, dict) and x.get("question")]
         except Exception: items = None
     if not items:
-        if AI_ENABLED: raise HTTPException(503, AI_BUSY_MESSAGE)
-        items = [{"question": "What problem does your project solve?", "answer": inp.project.get("problem_statement", "Explain the core user problem and who faces it.")}]
+        raise HTTPException(503, AI_BUSY_MESSAGE if AI_ENABLED else "The AI service is not configured on this server.")
     return {"questions": items}
 
 @api.get("/admin/stats")

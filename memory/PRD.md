@@ -44,3 +44,12 @@ Build a complete full-stack AI Project Idea Generator for B.Tech and college stu
 ## Backlog
 - P2: Real popular-branches data in /api/admin/stats (currently static 42/28/24 list).
 - P2: Split compact App.js into page components before large future changes.
+
+## Implemented (2026-06, iteration 3)
+- Testing agent (iteration_3.json, 100% backend + frontend): count honored (3/5/10), outputs input-specific, mock template fully removed, 503 visible errors on AI failure.
+- User asked to "replace Gemini key with Universal Key": verified NO Gemini key exists; app already uses EMERGENT_LLM_KEY (GPT 5.4 Mini) server-side. No change needed.
+
+## Backlog (from iteration_3 review)
+- P2: raise 503 if final idea count < requested after top-up loop.
+- P2: remove dead ternary in generate response; require JWT_SECRET from env.
+- P2: add data-testid to interests input; explicit value prop on <option>.
