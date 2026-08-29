@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 2: verified critical AI bug fix (distinct, non-mock generations), and new features (Idea Comparison, Viva Prep Mode). Ran 3 regression + 10 new backend tests (all pass) and full frontend flow (login → generate → compare → details → chat → viva → refine → save/favorites/history/delete → admin → google fallback → registration). Found one UI crash in ProjectCard when legacy DB records have dict-shaped tech_stack; added a defensive guard on frontend to prevent the crash on /history and /favorites.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/projects", "issue": "Returns legacy documents with tech_stack as a dict (not the normalized list). Only the generate path normalizes; stored older docs still have dict tech_stack which broke ProjectCard rendering. Recommend a one-time backfill or normalize in the GET response."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ProjectCard", "issue": "Crash 'project.tech_stack.slice is not a function' when tech_stack is a dict (legacy records). Guarded with Array.isArray fallback; main agent should still fix underlying data.", "selector": "[data-testid=project-card]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard generator form", "issues": ["React dev warning: <option> children include a <span> wrapper injected by the editor overlay causing 'Cannot infer the option value of complex children' warning. Cosmetic only in prod."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_projectgen_api.py",
+    "/app/backend/tests/test_ai_features.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/ai_features_results.xml"
+  ],
+  "action_items": [
+    "Optional: backfill or normalize tech_stack on read for legacy projects (backend GET /api/projects) so any client (mobile/pdf) stays safe.",
+    "Nice-to-have: return AI-derived popular branches from real data in /api/admin/stats instead of the static 42/28/24 list."
+  ],
+  "critical_code_review_comments": [
+    "ai_text semaphore + retry with backoff is a correct fix for the 429/mock leak bug; verified end-to-end (two distinct interests produce topic-specific, non-mock, disjoint titles).",
+    "generate route normalizes dict tech_stack for new docs but old docs remain broken and crash ProjectCard until frontend guard was added.",
+    "The favorites 'Ready when you are' fallback shows a hardcoded '4' when saved.length is 0; consider showing the real 0 to avoid misleading users."
+  ],
+  "updated_files": [
+    "/app/frontend/src/App.js (added Array.isArray guard for project.tech_stack in ProjectCard tag row)",
+    "/app/backend/tests/test_ai_features.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13 pytest)", "frontend": "100% after tech_stack guard fix"},
+  "test_credentials": "admin@projectgen.ai / ProjectGenAdmin123! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created several TEST_ admin-owned projects via generate (bug-verification for IoT and AI/ML interests) and one registered TEST_ student user.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug 'same generic results' is FIXED — verified topic-specific, distinct outputs for 'smart farming drones' vs 'stock market prediction'. Improve idea, Ask mentor, Viva Prep, Compare (dashboard + history), Save/Favorites/History/Delete, Admin stats, Google managed redirect + invalid-session fallback, and Registration all work in the UI. The added frontend guard shields against legacy dict-shaped tech_stack; underlying data cleanup is optional.",
+  "rca of the issue": "ProjectCard crashed on history/favorites because pre-fix records were persisted with tech_stack as a dict returned by the LLM. Current generate route normalizes on write, but existing docs still had dict shape. Fixed on the client with Array.isArray check that falls back to Object.values."
+}

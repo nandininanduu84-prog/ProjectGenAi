@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 6 — Verified login 'failed to fetch' bug fix + CORS credentials change. All browser and API flows pass on current preview URL (https://project-spark-ai-1.preview.emergentagent.com). Admin login lands on /dashboard cleanly, session persists on reload, fresh register+relogin works, and Groq smoke generate (count=3) returns exactly 3 ideas. IMPORTANT: The CORS credentials fix (allow_origin_regex='.*') is NOT taking effect at the response edge — an upstream ingress is overriding response headers with 'access-control-allow-origin: *' while still forwarding 'access-control-allow-credentials: true'. Same-origin (Vercel-independent) preview browser flows work because CORS is not enforced same-origin, but cross-origin credentialed clients (e.g. a Vercel frontend calling this backend) will STILL be rejected by browsers.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "OPTIONS/POST /api/*", "issue": "Response contains 'access-control-allow-origin: *' together with 'access-control-allow-credentials: true'. Origin is NOT echoed as intended. Ingress/proxy is overriding FastAPI CORSMiddleware output. Browsers will reject credentialed cross-origin requests. Curl proof: OPTIONS /api/auth/login with 'Origin: https://example.com' returns ACAO=* (should be https://example.com)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard generator form", "issues": ["React hydration warning: <span> injected inside <option> elements (from x-dynamic wrapper). Cosmetic, not functional. Origin appears to be a preview-env instrumentation wrapper on array-mapped <option> children."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_projectgen_api.py", "/app/backend/tests/test_retest_iter5.py"],
+  "action_items": [
+    "Investigate why upstream ingress is stripping FastAPI's echoed Access-Control-Allow-Origin and replacing with '*'. If the deployment target for a cross-origin Vercel frontend truly needs credentialed CORS, the ingress must be configured to allow the request Origin through OR remove its own CORS injection so FastAPI's headers surface. Otherwise the 'CORS fix' in this iteration is a no-op behind the current preview ingress.",
+    "(Optional/cosmetic) Suppress <span>-in-<option> React hydration warning by disabling the dynamic-child instrumentation on <option> children."
+  ],
+  "critical_code_review_comments": [
+    "server.py uses allow_origin_regex='.*' with allow_credentials=True — logically correct in FastAPI (echoes origin), but the ingress is masking it; verify by curl at deployment target, not just via FastAPI.",
+    "Cookie flags on login response: HttpOnly + Secure + SameSite=None + Partitioned + Max-Age=604800 — good for cross-site cookie support.",
+    "current_user() catches ObjectId conversion errors — good. JWT decoding errors mapped to 401 — good.",
+    "server.py is ~221 lines — within limits, but heavily one-liner style; readability could be improved (non-blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@projectgen.ai / ProjectGenAdmin123! (verified working). Fresh personal account created during test: tester_1787856528_373@test.dev / TestPass123! (also verified working).",
+  "seed_data_creation": "Created one throwaway user account (tester_1787856528_373@test.dev) during register flow verification. Safe to leave; harmless test row.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login 'failed to fetch' fully verified as a stale-URL user issue on the current preview URL; not reproducible. All auth flows (admin login, register, relogin, session persistence via httpOnly cookie, logout) work end-to-end in Playwright. Groq generate smoke (count=3) returned 3 ideas. ONE unresolved item: the CORS 'echoed origin' fix does not survive the ingress — external cross-origin credentialed clients (Vercel) will still fail. If a future iteration deploys a Vercel frontend and hits this backend, retest CORS from that origin, and configure the ingress accordingly.",
+  "rca of the issue": "User-reported 'failed to fetch' was NOT reproducible against the current preview URL. Most likely RCA: user was hitting a dead/stale preview URL (idea-forge-267...) or a stale Vercel copy pointing at an old backend. Mitigation: point users to the active REACT_APP_BACKEND_URL (https://project-spark-ai-1.preview.emergentagent.com). Secondary finding: the CORS middleware change intended to fix cross-origin credentialed requests is being overridden by the ingress (ACAO=* still returned). Real cross-origin fix will require ingress-level CORS configuration."
+}

@@ -2,30 +2,28 @@ from dotenv import load_dotenv
 from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env")
 
-import os, json, logging, secrets, requests
+import os, json, logging, secrets, requests, asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Any
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from motor.motor_asyncio import AsyncIOMotorClient
-import bcrypt, jwt
+import bcrypt, jwt, httpx
+from bson import ObjectId
 
-try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta
-except Exception:
-    LlmChat = None
+logging.basicConfig(level=logging.INFO)
 
 ROOT = Path(__file__).parent
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
 app = FastAPI(title="ProjectGen AI")
 api = APIRouter(prefix="/api")
-JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_hex(32))
+JWT_SECRET = os.environ["JWT_SECRET"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@projectgen.ai")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ProjectGenAdmin123!")
 
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[os.environ.get("FRONTEND_URL", "*")], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origin_regex=".*", allow_methods=["*"], allow_headers=["*"])
 
 class AuthInput(BaseModel):
     name: str = ""
@@ -45,6 +43,9 @@ class RefineInput(BaseModel):
 class ChatInput(BaseModel):
     project: dict; message: str
 
+class VivaInput(BaseModel):
+    project: dict
+
 def public_user(doc):
     return {"id": str(doc.get("_id", doc.get("id"))), "name": doc["name"], "email": doc["email"], "branch": doc.get("branch", ""), "college": doc.get("college", ""), "year": doc.get("year", ""), "role": doc.get("role", "student")}
 
@@ -56,38 +57,51 @@ async def current_user(request: Request):
     if not raw: raise HTTPException(401, "Please log in to continue")
     try: payload = jwt.decode(raw, JWT_SECRET, algorithms=["HS256"])
     except jwt.PyJWTError: raise HTTPException(401, "Your session has expired")
-    doc = await db.users.find_one({"_id": __import__("bson").ObjectId(payload["sub"])})
+    try: doc = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+    except Exception: raise HTTPException(401, "Invalid token")
     if not doc: raise HTTPException(401, "User not found")
     return doc
 
+AI_SEMAPHORE = asyncio.Semaphore(1)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+AI_ENABLED = bool(GROQ_API_KEY)
+AI_BUSY_MESSAGE = "The AI mentor is busy with another request. Please wait a few seconds and try again."
+AI_SYSTEM_MESSAGE = "You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked."
+
 async def ai_text(prompt: str, session: str):
-    key = os.environ.get("EMERGENT_LLM_KEY")
-    if not key or not LlmChat: return None
-    chat = LlmChat(api_key=key, session_id=session, system_message="You are ProjectGen AI, an expert academic project mentor. Return valid JSON only when asked.").with_model("openai", "gpt-5.4-mini")
-    out = ""
-    async for event in chat.stream_message(UserMessage(text=prompt)):
-        if isinstance(event, TextDelta): out += event.content
-    return out
+    if not AI_ENABLED: return None
+    async with AI_SEMAPHORE:
+        async with httpx.AsyncClient(timeout=120) as http:
+            for attempt in range(3):
+                try:
+                    r = await http.post("https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                        json={"model": GROQ_MODEL, "messages": [{"role": "system", "content": AI_SYSTEM_MESSAGE}, {"role": "user", "content": prompt}], "temperature": 0.9, "max_completion_tokens": 7000, "reasoning_effort": "low"})
+                    if r.status_code in (413, 429):
+                        await asyncio.sleep(6 * (attempt + 1)); continue
+                    r.raise_for_status()
+                    out = r.json()["choices"][0]["message"]["content"]
+                    if out and out.strip(): return out
+                except Exception as e:
+                    logging.error(f"Groq AI call failed: {e}")
+                    await asyncio.sleep(2)
+    return None
 
-def mock_projects(inp):
-    templates = [
-        {"focus": "Insight Hub", "angle": "a practical platform that turns student needs into measurable outcomes"},
-        {"focus": "Companion App", "angle": "a guided experience that simplifies a common student workflow"},
-        {"focus": "Analytics Dashboard", "angle": "a data-driven view that helps users make better decisions"},
-        {"focus": "Smart Assistant", "angle": "an AI-assisted tool that reduces manual effort"},
-        {"focus": "Community Platform", "angle": "a connected space that brings users and resources together"},
-        {"focus": "Tracker", "angle": "a focused tool for monitoring progress over time"},
-        {"focus": "Marketplace", "angle": "a two-sided platform connecting supply and demand"},
-        {"focus": "Recommendation Engine", "angle": "a personalized system that surfaces relevant options"},
-        {"focus": "Automation Tool", "angle": "a system that removes repetitive manual steps"},
-        {"focus": "Feedback Portal", "angle": "a structured way to collect and act on input"},
-    ]
-    results = []
-    for i in range(inp.count):
-        t = templates[i % len(templates)]
-        results.append({"title": f"{inp.interests.title()} {t['focus']}", "tagline": f"A {t['angle']}.", "problem_statement": f"Students need a focused {inp.project_type.lower()} solution for {inp.interests.lower()}.", "description": "A scoped academic project with a clear user journey, thoughtful data model, and room to demonstrate AI.", "suitable": f"Fits {inp.branch} students with {inp.difficulty.lower()} experience and a {inp.team_size}-member team.", "target_users": "Students, faculty mentors, and domain users", "key_features": ["Personalized dashboard", "Search and analytics", "AI-powered recommendations"], "ai_features": ["Smart classification", "Natural-language assistant"], "tech_stack": [x.strip() for x in (inp.technologies or "React, FastAPI, MongoDB").split(",")], "frontend": "React.js", "backend": "FastAPI", "database": "MongoDB", "apis": ["REST API", "AI service"], "architecture": "Responsive React client connected to FastAPI REST services and MongoDB.", "collections": ["users", "projects", "conversations"], "roadmap": ["Research and wireframes", "Build core workflow", "Add AI and testing", "Deploy and document"], "estimated_time": inp.duration, "difficulty": inp.difficulty, "responsibilities": ["Frontend and UX", "Backend and data", "AI and testing"], "future": ["Mobile companion", "Advanced analytics", "Faculty review mode"], "learning_outcomes": ["API design", "Database modeling", "Responsible AI"]})
-    return results
-
+def parse_ideas(raw):
+    if not raw: return None
+    start = raw.find("[")
+    if start == -1: return None
+    candidates = []
+    if "]" in raw[start:]: candidates.append(raw[start:raw.rfind("]") + 1])
+    if "}" in raw[start:]: candidates.append(raw[start:raw.rfind("}") + 1] + "]")
+    for text in candidates:
+        try:
+            ideas = json.loads(text)
+            found = [x for x in ideas if isinstance(x, dict) and x.get("title")]
+            if found: return found
+        except Exception: continue
+    return None
 @api.post("/auth/register")
 async def register(data: AuthInput, response: Response):
     email = data.email.lower()
@@ -126,19 +140,24 @@ async def me(user=Depends(current_user)): return public_user(user)
 
 @api.post("/projects/generate")
 async def generate(inp: GeneratorInput, user=Depends(current_user)):
-    prompt = f"Generate {inp.count} distinct academic project ideas as a JSON array. Student: branch={inp.branch}, year={inp.year}, skills={inp.skills}, interests={inp.interests}, type={inp.project_type}, difficulty={inp.difficulty}, team={inp.team_size}, duration={inp.duration}, technologies={inp.technologies}. Each object must include title, tagline, problem_statement, description, suitable, target_users, key_features, ai_features, tech_stack, frontend, backend, database, apis, architecture, collections, roadmap, estimated_time, difficulty, responsibilities, future, learning_outcomes. Avoid generic duplicates."
-    raw = await ai_text(prompt, f"generate-{user['_id']}-{datetime.now().timestamp()}")
-    ideas = None
-    if raw:
-        try: ideas = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
-        except Exception: ideas = None
-    ideas = ideas or mock_projects(inp)
+    if not AI_ENABLED: raise HTTPException(503, "The AI service is not configured on this server (missing GROQ_API_KEY). Ideas cannot be generated.")
+    def build_prompt(count, exclude):
+        avoid = f" Do NOT repeat these titles: {', '.join(exclude)}." if exclude else ""
+        return f"Generate exactly {count} distinct academic project ideas as a JSON array of {count} objects. Student profile: branch={inp.branch}, year={inp.year}, skills={inp.skills}, interests={inp.interests}, type={inp.project_type}, difficulty={inp.difficulty}, team={inp.team_size}, duration={inp.duration}, technologies={inp.technologies}. Every idea must be clearly specific to the stated interests and skills. Each object must include title, tagline, problem_statement, description, suitable, target_users, key_features, ai_features, tech_stack, frontend, backend, database, apis, architecture, collections, roadmap, estimated_time, difficulty, responsibilities, future, learning_outcomes. Keep every string concise (max 22 words) and every list at most 5 items so the full array fits in the response.{avoid}"
+    ideas = parse_ideas(await ai_text(build_prompt(inp.count, []), f"generate-{user['_id']}-{datetime.now().timestamp()}")) or []
+    if ideas and len(ideas) < inp.count:
+        extra = parse_ideas(await ai_text(build_prompt(inp.count - len(ideas), [i["title"] for i in ideas]), f"generate-topup-{user['_id']}-{datetime.now().timestamp()}"))
+        if extra:
+            titles = {i["title"] for i in ideas}
+            ideas += [x for x in extra if x["title"] not in titles]
+    if not ideas: raise HTTPException(503, AI_BUSY_MESSAGE)
+    ideas = ideas[:inp.count]
     for idea in ideas:
         if isinstance(idea.get("tech_stack"), dict):
             idea["tech_stack"] = [str(value) for value in idea["tech_stack"].values()]
     docs = [{**p, "id": secrets.token_hex(12), "user_id": str(user["_id"]), "branch": inp.branch, "project_type": inp.project_type, "created_at": datetime.now(timezone.utc).isoformat(), "saved": False} for p in ideas]
     if docs: await db.projects.insert_many(docs)
-    return {"projects": [{**p, "id": str(r.inserted_id)} for p, r in zip(docs, [])]} if False else {"projects": [{k:v for k,v in p.items() if k != "_id"} for p in docs]}
+    return {"projects": [{k: v for k, v in p.items() if k != "_id"} for p in docs]}
 
 @api.get("/projects")
 async def projects(search: str = "", difficulty: str = "", saved: bool = False, user=Depends(current_user)):
@@ -146,6 +165,8 @@ async def projects(search: str = "", difficulty: str = "", saved: bool = False, 
     if difficulty: q["difficulty"] = difficulty
     if saved: q["saved"] = True
     rows = await db.projects.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+    for row in rows:
+        if isinstance(row.get("tech_stack"), dict): row["tech_stack"] = [str(v) for v in row["tech_stack"].values()]
     if search: rows = [x for x in rows if search.lower() in x.get("title", "").lower()]
     return {"projects": rows}
 
@@ -163,12 +184,26 @@ async def refine(inp: RefineInput, user=Depends(current_user)):
     if raw:
         try: return {"project": json.loads(raw[raw.find("{"):raw.rfind("}")+1])}
         except Exception: pass
-    return {"project": {**inp.project, "tagline": f"Refined direction: {inp.instruction}", "future": inp.project.get("future", []) + ["Measure outcomes with student feedback"]}}
+    raise HTTPException(503, AI_BUSY_MESSAGE if AI_ENABLED else "The AI service is not configured on this server.")
 
 @api.post("/ai/chat")
 async def chat(inp: ChatInput, user=Depends(current_user)):
     raw = await ai_text(f"Answer the student's question about this project in 2-4 useful paragraphs. Project: {json.dumps(inp.project)} Question: {inp.message}", f"chat-{user['_id']}")
-    return {"answer": raw or "Start with the smallest working user flow, define your data model early, and validate each feature with a short demo script."}
+    if not raw: raise HTTPException(503, AI_BUSY_MESSAGE if AI_ENABLED else "The AI service is not configured on this server.")
+    return {"answer": raw}
+
+@api.post("/ai/viva")
+async def viva(inp: VivaInput, user=Depends(current_user)):
+    raw = await ai_text(f"You are an examiner. Generate 8 likely viva/oral-examination questions with strong suggested answers (3-5 sentences each) for this student project. Return only a JSON array of objects with 'question' and 'answer' string fields. Project: {json.dumps(inp.project)}", f"viva-{user['_id']}")
+    items = None
+    if raw:
+        try:
+            items = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
+            items = [x for x in items if isinstance(x, dict) and x.get("question")]
+        except Exception: items = None
+    if not items:
+        raise HTTPException(503, AI_BUSY_MESSAGE if AI_ENABLED else "The AI service is not configured on this server.")
+    return {"questions": items}
 
 @api.get("/admin/stats")
 async def admin_stats(user=Depends(current_user)):

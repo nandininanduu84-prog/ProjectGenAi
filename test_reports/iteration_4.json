@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 4 verified the Groq API swap. Backend: all 10 pytest cases in test_ai_features.py pass (login, generate 3-idea distinct/topic-specific/non-template, refine, chat, viva>=3 questions, save/list/delete, history, invalid Google session 502). Direct urban-beekeeping curl returned 3 topic-specific ideas with title/problem_statement/key_features(>=5)/tech_stack/roadmap/learning_outcomes populated in ~5-10s. No mock/template markers in server.py (grep confirms mock removed). Frontend E2E: login via UI, dashboard renders, Generate ideas produced 3 project-cards with bee-themed titles ('BeeHealth Insight Platform', 'Pollinator Classroom', 'Medicinal Honey Marketplace & Tracker'); details page opens and shows AI content. HOWEVER a REGRESSION was detected on count>=5: 3 consecutive count=5 requests (across different interests: space robotics, library management, urban beekeeping) all returned 503 AI_BUSY_MESSAGE. Root cause confirmed by direct Groq call: openai/gpt-oss-120b is a reasoning model that consumes reasoning tokens before content; without an explicit max_completion_tokens the default output cap truncates the JSON array (finish_reason='length', content_len=11876, no closing ']'), so parse_ideas returns None and the top-up loop also fails. Previous iteration on the Emergent provider had count=5 passing; this is a Groq-specific regression.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/projects/generate", "issue": "count=5 (and likely count=10) returns 503 'The AI mentor is busy'. Actual cause: Groq gpt-oss-120b response is truncated (finish_reason=length) because no max_completion_tokens is set and each idea has 21 required fields. parse_ideas cannot parse the incomplete JSON array. Fix: request larger output (e.g. max_completion_tokens 16384 or higher / model's max) and/or reduce fields-per-idea; also raise 503 with a more descriptive message when JSON parse fails vs when Groq returns 429.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "ai_text", "issue": "logging.error uses default level; not visible in supervisor backend.err.log because Uvicorn logger is not configured for module logs. Groq 429/timeouts are silently swallowed and surface only as generic 503 to the user."},
+      {"endpoint": "generate top-up loop", "issue": "If final ideas list is shorter than requested count, ideas[:count] silently returns fewer items rather than 503. Should assert equality and raise a clear error when short."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Generate ideas count=5 via UI", "issue": "Backend regression above blocks this UI path; clicking '5' then Generate will fail with 503 toast. Not tested end-to-end because backend already fails.", "affected_selectors": ["[data-testid='generate-ideas-button']"]}
+    ],
+    "design_issues": [
+      {"screen": "Dashboard <select> components", "issues": ["React hydration warning still present: 'Cannot infer the option value of complex children'. Add explicit value prop or plain string children to <option>."]},
+      {"screen": "Dashboard Interests field", "issues": ["Still no data-testid on Interests <input>. Existing testids on other fields are good; add data-testid='interests-input' for parity."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ai_features.py",
+    "/app/backend/tests/test_generate_count.py",
+    "/app/test_reports/pytest/ai_features_results.xml"
+  ],
+  "action_items": [
+    "FIX (critical): Pass max_completion_tokens (e.g. 16000+) in the Groq call in ai_text() so multi-idea outputs are not truncated on gpt-oss-120b. Verify count=5 returns 5 complete ideas.",
+    "Improve error messaging: distinguish 'AI upstream error / truncation' from 'AI busy'; raise 503 with clear detail when parse_ideas fails after Groq success.",
+    "Add data-testid='interests-input' on the Interests field.",
+    "Silence React <option> hydration warning by giving <option> a plain string child or explicit value prop.",
+    "Optional: expose the Groq API errors via Uvicorn logger (logging.basicConfig at startup or use logger from FastAPI/uvicorn) so 429/timeout events show up in backend.err.log."
+  ],
+  "critical_code_review_comments": [
+    "ai_text() has no max_completion_tokens parameter -- root cause of the count>=5 regression on Groq's reasoning model.",
+    "generate() silently slices to inp.count without asserting length; masks partial failures.",
+    "Line 151: dead ternary `if False else` still present.",
+    "JWT_SECRET falls back to random-per-process if env missing; sessions invalidate on backend restart. Should require env value.",
+    "logging module not configured; ai_text() error logs never surface in supervisor logs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "90% (10/10 pytest pass; count>=5 curl regression outside test scope)", "frontend": "100% for count=3 smoke path"},
+  "test_credentials": "admin@projectgen.ai / ProjectGenAdmin123! (verified working)",
+  "seed_data_creation": "None - live AI generations used the existing admin account",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Groq provider swap is functional for count=3 (both API and UI). count=5/10 is broken due to output truncation on openai/gpt-oss-120b (finish_reason=length). Verify fix by running: curl POST /api/projects/generate with count=5 and inspecting len(projects)==5. Existing tests test_ai_features.py only cover count=3, so extend or reuse test_generate_count.py after the fix. Frontend testids: login-email-input/login-password-input/login-submit-button/generate-ideas-button/project-card exist; Interests input still lacks a testid.",
+  "rca of the issue": "Regression: count>=5 returns 503. Reproduction: curl POST /api/projects/generate with any interests and count:5 -> {'detail': 'The AI mentor is busy...'}. Direct Groq test with the same prompt returns HTTP 200 with finish_reason='length' and 11876 chars of unclosed JSON. Because parse_ideas locates raw[find('['):rfind(']')+1] and no ']' exists in the truncated tail, json.loads fails; the top-up retry regenerates the same oversized prompt with the same truncation. Mitigation: add 'max_completion_tokens': 16384 (or higher supported by the model) to the Groq JSON body in ai_text(), or split generation into per-idea calls."
+}
