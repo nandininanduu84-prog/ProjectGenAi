@@ -102,20 +102,19 @@ def parse_ideas(raw):
             if found: return found
         except Exception: continue
     return None
-
 @api.post("/auth/register")
 async def register(data: AuthInput, response: Response):
     email = data.email.lower()
     if await db.users.find_one({"email": email}): raise HTTPException(400, "An account with this email already exists")
     doc = {"name": data.name, "email": email, "password_hash": bcrypt.hashpw(data.password.encode(), bcrypt.gensalt()).decode(), "branch": data.branch, "college": data.college, "year": data.year, "role": "student", "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.users.insert_one(doc); t = token(str(result.inserted_id), email); response.set_cookie("access_token", t, httponly=True, samesite="lax", max_age=604800)
+    result = await db.users.insert_one(doc); t = token(str(result.inserted_id), email); response.set_cookie("access_token", t, httponly=True, samesite="none", secure=True, max_age=604800)
     return public_user({**doc, "_id": result.inserted_id})
 
 @api.post("/auth/login")
 async def login(data: AuthInput, response: Response):
     doc = await db.users.find_one({"email": data.email.lower()})
     if not doc or not bcrypt.checkpw(data.password.encode(), doc["password_hash"].encode()): raise HTTPException(401, "Email or password is incorrect")
-    response.set_cookie("access_token", token(str(doc["_id"]), doc["email"]), httponly=True, samesite="lax", max_age=604800); return public_user(doc)
+    response.set_cookie("access_token", token(str(doc["_id"]), doc["email"]), httponly=True, samesite="none", secure=True, max_age=604800); return public_user(doc)
 
 @api.post("/auth/logout")
 async def logout(response: Response): response.delete_cookie("access_token"); return {"ok": True}
@@ -133,7 +132,7 @@ async def google_session(session_id: str, response: Response):
     if not doc:
         insert = {"name": profile.get("name", "Google student"), "email": email, "password_hash": "google-oauth", "picture": profile.get("picture", ""), "branch": "CSE", "college": "", "year": "3rd Year", "role": "student", "created_at": datetime.now(timezone.utc).isoformat()}
         created = await db.users.insert_one(insert); doc = {**insert, "_id": created.inserted_id}
-    response.set_cookie("access_token", token(str(doc["_id"]), doc["email"]), httponly=True, samesite="lax", max_age=604800)
+    response.set_cookie("access_token", token(str(doc["_id"]), doc["email"]), httponly=True, samesite="none", secure=True, max_age=604800)
     return public_user(doc)
 
 @api.get("/auth/me")
